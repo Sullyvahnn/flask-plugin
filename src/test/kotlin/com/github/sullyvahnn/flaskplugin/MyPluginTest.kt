@@ -7,8 +7,9 @@ import com.intellij.testFramework.TestDataPath
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.PsiErrorElementUtil
 import com.github.sullyvahnn.flaskplugin.services.MyProjectService
+import org.junit.jupiter.api.Assertions.*
 
-@TestDataPath("\$CONTENT_ROOT/src/test/testData")
+@TestDataPath("\$CONTENT_ROOT/src/test/kotlin/testData/rename")
 class MyPluginTest : BasePlatformTestCase() {
 
     fun testXMLFile() {

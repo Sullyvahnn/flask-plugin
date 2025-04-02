@@ -5,11 +5,23 @@
     <vendor>sullyvahnn</vendor>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.python</depends>
 
     <resource-bundle>messages.MyBundle</resource-bundle>
 
+<!--    <extensions defaultExtensionNs="com.intellij">-->
+<!--&lt;!&ndash;        <toolWindow factoryClass="com.github.sullyvahnn.flaskplugin.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>&ndash;&gt;-->
+<!--&lt;!&ndash;        <postStartupActivity implementation="com.github.sullyvahnn.flaskplugin.startup.MyProjectActivity" />&ndash;&gt;-->
+<!--    </extensions>-->
+    <projectListeners>
+        <listener
+                class="com.github.sullyvahnn.flaskplugin.java.CaretPositionTracker"
+                topic="com.intellij.openapi.wm.ex.ToolWindowManagerListener"/>
+    </projectListeners>
+
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.sullyvahnn.flaskplugin.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.sullyvahnn.flaskplugin.startup.MyProjectActivity" />
+        <statusBarWidgetFactory
+                implementation="com.github.sullyvahnn.flaskplugin.java.CaretPositionWidgetFactory"
+                id="CaretPositionWidget"/>
     </extensions>
 </idea-plugin>

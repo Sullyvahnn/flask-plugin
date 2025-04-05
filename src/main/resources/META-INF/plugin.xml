@@ -15,13 +15,19 @@
 <!--    </extensions>-->
     <projectListeners>
         <listener
-                class="com.github.sullyvahnn.flaskplugin.java.CaretPositionTracker"
+                class="com.github.sullyvahnn.flaskplugin.java.CaretListener.CaretPositionTracker"
                 topic="com.intellij.openapi.wm.ex.ToolWindowManagerListener"/>
     </projectListeners>
 
     <extensions defaultExtensionNs="com.intellij">
         <statusBarWidgetFactory
-                implementation="com.github.sullyvahnn.flaskplugin.java.CaretPositionWidgetFactory"
-                id="CaretPositionWidget"/>
+                implementation="com.github.sullyvahnn.flaskplugin.java.NormalTypeWidget.NormalTypeWidgetFactory"
+                id="NormalTypeWidget"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <statusBarWidgetFactory
+                implementation="com.github.sullyvahnn.flaskplugin.java.TreeTypeWidget.TreeTypeWidgetFactory"
+                id="TreeTypeWidget"/>
     </extensions>
 </idea-plugin>

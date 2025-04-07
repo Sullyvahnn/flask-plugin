@@ -247,6 +247,7 @@ public class NormalTypeWidget extends EditorBasedWidget
     protected void highlightLine(Integer lineNumber) {
         Editor editor = getCurrentEditor();
         if (editor == null) return;
+        if(lineNumber<0) return;
 
         // Create text attributes for highlighting with a softer color
         TextAttributes attributes = getHighlightAttributes();
@@ -373,10 +374,10 @@ public class NormalTypeWidget extends EditorBasedWidget
         // Count occurrences of each type and collect line numbers
         for (ExpressionData data : expressionDataList) {
             // Increment count for this type
-            typeCounts.put(data.type, typeCounts.getOrDefault(data.type, 0) + 1);
+            typeCounts.put(data.type.trim(), typeCounts.getOrDefault(data.type.trim(), 0) + 1);
 
             // Add this line number to the type's list
-            typeLines.computeIfAbsent(data.type, k -> new ArrayList<>()).add(data.lineNumber);
+            typeLines.computeIfAbsent(data.type.trim(), k -> new ArrayList<>()).add(data.lineNumber);
         }
 
         updateMessageString();

@@ -9,6 +9,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
 import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.types.PyClassType;
 import com.jetbrains.python.psi.types.PyType;
 import com.jetbrains.python.psi.types.PyUnionType;
 import com.jetbrains.python.psi.types.TypeEvalContext;
@@ -57,7 +58,9 @@ public class VariableTypeResolver {
      */
     protected void initializeElements(CaretEvent event) {
         collectedTypes = new ArrayList<>();
+        isError = false;
         file = getPsiFile(event);
+        context=null;
         if (file == null) {
             isError = true;
             return;
@@ -69,7 +72,7 @@ public class VariableTypeResolver {
             return;
         }
         element = element.getParent();
-        if (!isVariable(element)) {
+        if (!isVariable(element) && !(element instanceof PyNamedParameter)) {
             isError = true;
             return;
         }
@@ -91,7 +94,7 @@ public class VariableTypeResolver {
      * @param identifier identifier under caret
      */
     protected void findVariableAssignments(PsiElement identifier) {
-
+        if(isError) return;
         scope.getContainingFile().accept(new PyRecursiveElementVisitor() {
             // if assignment check if target equals identifier
             @Override
@@ -215,7 +218,7 @@ public class VariableTypeResolver {
      * @param element The element to check
      * @return true if the element is a parameter reference, false otherwise
      */
-    public boolean isEvaluateParameter(PsiElement element) {
+    protected boolean isEvaluateParameter(PsiElement element) {
         if (element instanceof PyReferenceExpression targetExpr) {
             // Get containing function
             PyFunction containingFunction = PsiTreeUtil.getParentOfType(targetExpr, PyFunction.class);
@@ -337,8 +340,9 @@ public class VariableTypeResolver {
             public void visitPyReturnStatement(@NotNull PyReturnStatement returnStatement) {
                 if(!isNoneAdded && isReturnUnreachable(returnStatement)) {
                     isNoneAdded = true;
-                    addNoneType();
+                    addNoneType(expression);
                 }
+
                 evaluateType(returnStatement.getExpression());
             }
 
@@ -347,11 +351,13 @@ public class VariableTypeResolver {
                 // Skip nested function definitions to prevent finding returns
                 // that belong to nested functions rather than the target function
             }
-            private void addNoneType() {
-                ExpressionData expressionData = new ExpressionData(expression, "None");
-                collectedTypes.add(expressionData);
-            }
+
         });
+    }
+
+    protected void addNoneType(PyExpression expression) {
+        ExpressionData expressionData = new ExpressionData(expression, "None");
+        collectedTypes.add(expressionData);
     }
 
     /**
@@ -393,8 +399,14 @@ public class VariableTypeResolver {
      * @param expr The expression to evaluate
      */
     protected void evaluateType(PyExpression expr) {
+        if(context == null) return;
+        if(isEvaluateParameter(expr)) return;
         if(isEvaluateVariable(expr)) return;
-        if(isEvaluateFunction(expr)) return;
+        if(!isClass(expr)) {
+            if(isEvaluateFunction(expr)) return;
+        }
+
+
         PyType type = context.getType(expr);
         if(type == null && expr instanceof PyCallExpression) {
             String typeString = Objects.requireNonNull(((PyCallExpression) expr).getCallee()).getText()+"()";
@@ -406,6 +418,11 @@ public class VariableTypeResolver {
             collectedTypes.add(makeExpressionData(expr, t));
         }
 
+    }
+
+    protected boolean isClass(PyExpression expr) {
+        PyType type = context.getType(expr);
+        return type instanceof PyClassType;
     }
 
     /**

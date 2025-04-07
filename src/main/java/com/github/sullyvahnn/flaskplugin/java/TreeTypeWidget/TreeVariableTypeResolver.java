@@ -3,6 +3,8 @@ package com.github.sullyvahnn.flaskplugin.java.TreeTypeWidget;
 import com.github.sullyvahnn.flaskplugin.java.ExpressionData.ExpressionData;
 import com.github.sullyvahnn.flaskplugin.java.NormalTypeWidget.VariableTypeResolver;
 import com.intellij.openapi.editor.event.CaretEvent;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.jetbrains.python.psi.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -10,168 +12,157 @@ import org.jetbrains.annotations.Nullable;
 import java.util.*;
 
 public class TreeVariableTypeResolver extends VariableTypeResolver {
-    private final Map<String, ExpressionData> expressionDataMap = new HashMap<>();
-    private final Map<ExpressionData, List<ExpressionData>> variableDependencyMap = new HashMap<>();
+    private final Stack<ExpressionData> expressionStack = new Stack<>();
+    private final Map<ExpressionData, List<ExpressionData>> expressionDependencyMap = new HashMap<>();
+    private ExpressionData root;
+    List<String> processedVariableNames;
 
     /**
-     * Gets the variable dependency map for the expression at the caret.
-     * The map contains the current variable as the key and all its dependencies as values.
+     * Gets possible types for the element at the current caret position.
+     * Overrides parent method to initialize and clear data structures.
      *
-     * @param event The caret event
-     * @return A map of variable dependencies with their types, or null if there's an error
+     * @param event The caret event containing position information
+     * @return Map of expression data containing possible types, or null if an error occurred
      */
-    public @Nullable Map<ExpressionData, List<ExpressionData>> getVariablePossibleTypeTree(CaretEvent event) {
-        List<ExpressionData> types = super.getPossibleTypes(event);
-        if (isError || types == null || types.isEmpty()) {
-            return null;
-        }
 
-        // Clear maps for new analysis
-        expressionDataMap.clear();
-        variableDependencyMap.clear();
-
-        // Get the variable name at the caret position
-        String variableName = element.getText();
-        if (variableName == null || variableName.isEmpty()) {
-            return null;
-        }
-
-        // Process the current variable
-        buildDependencyMap(variableName);
-
-        return variableDependencyMap;
+    public @Nullable Map<ExpressionData,List<ExpressionData>> getPossibleTreeTypes(CaretEvent event) {
+        processedVariableNames = new ArrayList<>();
+        expressionStack.clear();
+        expressionDependencyMap.clear();
+        root=null;
+        super.getPossibleTypes(event);
+        return expressionDependencyMap;
     }
 
-    /**
-     * Recursively builds the dependency map for a variable
-     *
-     * @param variableName The name of the variable to analyze
-     */
-    private void buildDependencyMap(String variableName) {
-        // Create an ExpressionData for the current variable if it doesn't exist
-        if (!expressionDataMap.containsKey(variableName)) {
-            expressionDataMap.put(variableName, new ExpressionData((PyExpression) element, variableName));
-        }
-
-        ExpressionData currentVariable = expressionDataMap.get(variableName);
-
-        // Initialize list of dependencies if not already present
-        if (!variableDependencyMap.containsKey(currentVariable)) {
-            variableDependencyMap.put(currentVariable, new ArrayList<>());
-        }
-
-        // Find all assignments for this variable
-        findVariableAssignments(currentVariable, variableName);
+    @Override
+    protected void findDeclarationParameterType(@NotNull PyParameter identifier) {
+        createConnection(new ExpressionData((PyExpression) identifier, identifier.getName()));
+        super.findDeclarationParameterType(identifier);
+        expressionStack.pop();
     }
 
-    /**
-     * Finds all assignments for a variable and tracks dependencies
-     *
-     * @param currentVariable The ExpressionData for the current variable
-     * @param variableName The name of the variable to find assignments for
-     */
-    private void findVariableAssignments(ExpressionData currentVariable, String variableName) {
-        if (scope == null) return;
-
-        scope.getContainingFile().accept(new PyRecursiveElementVisitor() {
-            @Override
-            public void visitPyAssignmentStatement(@NotNull PyAssignmentStatement assignment) {
-                super.visitPyAssignmentStatement(assignment);
-
-                PyExpression[] targets = assignment.getTargets();
-                PyExpression assignedValue = assignment.getAssignedValue();
-                if (assignedValue == null) return;
-
-                // Check if this assignment targets our variable
-                for (PyExpression target : targets) {
-                    if (Objects.equals(target.getName(), variableName)) {
-                        // Process the assigned value
-                        processAssignedValue(currentVariable, assignedValue);
-                    }
-                }
+    @Override
+    protected boolean isEvaluateParameter(PsiElement element) {
+        if (element instanceof PyReferenceExpression targetExpr) {
+            // Get containing function
+            PyFunction containingFunction = PsiTreeUtil.getParentOfType(targetExpr, PyFunction.class);
+            if (containingFunction == null) {
+                return false;
             }
-        });
-    }
-
-    /**
-     * Process the assigned value and update the dependency map
-     *
-     * @param currentVariable The current variable's ExpressionData
-     * @param assignedValue The expression assigned to the variable
-     */
-    private void processAssignedValue(ExpressionData currentVariable, PyExpression assignedValue) {
-        if (assignedValue instanceof PyReferenceExpression) {
-            // If assigned value is another variable, track dependency
-            String referenceName = assignedValue.getName();
-            if (referenceName != null && !referenceName.isEmpty()) {
-                // Create dependency ExpressionData
-                ExpressionData dependency = new ExpressionData(assignedValue, referenceName);
-
-                // Add dependency to the map
-                variableDependencyMap.get(currentVariable).add(dependency);
-
-                // Add to expressionDataMap if not already present
-                expressionDataMap.putIfAbsent(referenceName, dependency);
-
-                // Recursively process this dependency if not already processed
-                if (!variableDependencyMap.containsKey(dependency)) {
-                    variableDependencyMap.put(dependency, new ArrayList<>());
-                    buildDependencyMap(referenceName);
-                }
-            }
-        } else {
-            // For non-variable assignments, determine their type
-            evaluateTypeAndAddToDependencyMap(currentVariable, assignedValue);
+            createConnection(new ExpressionData(targetExpr, targetExpr.getName()));
+            super.isEvaluateParameter(element);
         }
+        return false;
     }
 
     /**
-     * Evaluates the type of an expression and adds it to the dependency map
+     * Overrides the parent method to push the current identifier to the stack
+     * and record dependencies between variables.
      *
-     * @param currentVariable The current variable's ExpressionData
-     * @param expression The expression to evaluate
-     */
-    private void evaluateTypeAndAddToDependencyMap(ExpressionData currentVariable, PyExpression expression) {
-        // Temporary store for collected types
-        List<ExpressionData> tempTypes = new ArrayList<>(collectedTypes);
-        collectedTypes.clear();
-
-        // Use parent class's method to evaluate the type
-        evaluateType(expression);
-
-        // Add all determined types to the dependency map
-        if (!collectedTypes.isEmpty()) {
-            variableDependencyMap.get(currentVariable).addAll(collectedTypes);
-        }
-
-        // Restore the previous state
-        collectedTypes.clear();
-        collectedTypes.addAll(tempTypes);
-    }
-
-    /**
-     * Overridden to enhance variable tracking
+     * @param identifier identifier under caret
      */
     @Override
-    protected void evaluateType(PyExpression expr) {
-        if (expr instanceof PyReferenceExpression) {
-            // If the expression is a variable reference, handle it specially
-            String referenceName = expr.getName();
-            if (referenceName != null && !referenceName.isEmpty()) {
-                ExpressionData reference = new ExpressionData(expr, referenceName);
-                collectedTypes.add(reference);
+    protected void findVariableAssignments(PsiElement identifier) {
+        if (isError) return;
+        ExpressionData current;
+        if (identifier.getNextSibling() instanceof PyArgumentList) {
+            current = new ExpressionData((PyExpression) identifier, ((PyExpression) identifier).getName() + "()");
+        } else {
+            current = new ExpressionData((PyExpression) identifier, identifier.getText());
+        }
+        if(root == null) root = current;
 
-                // Recursively process this reference if not already in our map
-                if (!variableDependencyMap.containsKey(reference)) {
-                    expressionDataMap.putIfAbsent(referenceName, reference);
-                    variableDependencyMap.put(reference, new ArrayList<>());
-                    buildDependencyMap(referenceName);
-                }
-                return;
+        createConnection(current);
+
+        super.findVariableAssignments(identifier);
+
+        // Pop from stack when we're done with this variable
+        if (expressionStack.size() != 1) {
+            expressionStack.pop();
+        }
+        collectedTypes.clear();
+    }
+
+    @Override
+    protected void evaluateType(PyExpression expression) {
+        if (isError) return;
+        collectedTypes.clear();
+        if(processedVariableNames.contains(expression.getText())) return;
+        super.evaluateType(expression);
+        addToDependencyMap();
+
+    }
+
+    private void addToDependencyMap() {
+        if(expressionStack.isEmpty()) return;
+        ExpressionData currentExpressionData = expressionStack.peek();
+        // Get newly added expression data items
+        List<ExpressionData> newExpressionData = collectedTypes;
+
+        for (ExpressionData data : newExpressionData) {
+            // Create an entry for the current expression if it doesn't exist
+            ExpressionData key = findDependencyMapKey(currentExpressionData.type);
+            if( key == null) {
+                expressionDependencyMap.put(currentExpressionData, new ArrayList<>());
+                expressionDependencyMap.get(currentExpressionData).add(data);
+            } else {
+                if(!checkIfAbsent(key, data)) return;
+                expressionDependencyMap.get(key).add(data);
+            }
+            return;
+        }
+    }
+
+    private boolean checkIfAbsent(ExpressionData key, ExpressionData value) {
+        if(key == null && value == null) return true;
+       for (ExpressionData data : expressionDependencyMap.get(key)) {
+           if(data.lineNumber == value.lineNumber &&
+                   Objects.equals(data.type, value.type)) {
+               return false;
+           }
+           if(Objects.equals(data,value)) return false;
+       }
+       return true;
+    }
+
+    private ExpressionData findDependencyMapKey(String type) {
+        for (ExpressionData expressionData : expressionDependencyMap.keySet()) {
+            if(expressionData.type.equals(type)) {
+                return expressionData;
             }
         }
+        return null;
+    }
 
-        // Use the parent implementation for other expression types
-        super.evaluateType(expr);
+    /**
+     * creates connection between expressionData and latest value on expressionStack
+     * @param expressionData expression we need to connect
+     */
+    private void createConnection(ExpressionData expressionData) {
+//        if(ignoreNextConnection) return;
+        if (!expressionStack.isEmpty()) {
+            List<ExpressionData> copiedCollectedTypes = collectedTypes;
+            collectedTypes = List.of(expressionData);
+            addToDependencyMap();
+            collectedTypes = copiedCollectedTypes;
+        }
+        processedVariableNames.add(expressionData.type);
+        expressionStack.push(expressionData);
+    }
+
+    /**
+     * special handling to None type
+     * @param expression expression with None Type possition
+     */
+    @Override
+    protected void addNoneType(PyExpression expression) {
+        List<ExpressionData> copiedCollectedTypes = collectedTypes;
+        collectedTypes.clear();
+        super.addNoneType(expression);
+        addToDependencyMap();
+        collectedTypes = copiedCollectedTypes;
+    }
+    public ExpressionData getRoot() {
+        return root;
     }
 }

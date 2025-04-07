@@ -3,7 +3,6 @@ package com.github.sullyvahnn.flaskplugin.java.TreeTypeWidget;
 import com.github.sullyvahnn.flaskplugin.java.ExpressionData.ExpressionData;
 import com.github.sullyvahnn.flaskplugin.java.NormalTypeWidget.NormalTypeWidget;
 import com.intellij.icons.AllIcons;
-import com.intellij.openapi.editor.event.CaretEvent;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.ui.awt.RelativePoint;
@@ -11,51 +10,48 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import javax.swing.tree.DefaultMutableTreeNode;
-import javax.swing.tree.DefaultTreeCellRenderer;
-import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.*;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class TreeTypeWidget extends NormalTypeWidget {
-    private final TreeVariableTypeResolver typeMapper;
     private Map<ExpressionData, List<ExpressionData>> currentTypeMap;
     private ExpressionData currentVariable;
     private final Set<String> processedTypes = new HashSet<>();
 
     public TreeTypeWidget(@NotNull Project project) {
         super(project);
-        typeMapper = new TreeVariableTypeResolver();
     }
     /**
      * Updates the widget with type information based on caret position
      */
-    public void updateFromCaret(CaretEvent event) {
+
+    public void updateTreeValue(Map<ExpressionData, List<ExpressionData>> currentTypeMap, ExpressionData root) {
         // Clear previous data
         processedTypes.clear();
-        currentVariable = null;
+        this.currentTypeMap = currentTypeMap; // Store the map reference
 
-        currentTypeMap = typeMapper.getVariablePossibleTypeTree(event);
-
-        if (currentTypeMap != null && !currentTypeMap.isEmpty()) {
-            // Get the current variable (first key in the map)
-            currentVariable = currentTypeMap.keySet().iterator().next();
-
-            // Extract all types recursively
-            List<ExpressionData> allTypes = new ArrayList<>();
-            collectTypesRecursively(currentVariable, allTypes);
-
-            // Update the widget display
-            updateValue(allTypes);
-        } else {
-            // Clear the widget if no types found
+        if(currentTypeMap == null || currentTypeMap.isEmpty() || root == null) {
             typeLines.clear();
             typeCounts.clear();
             updateMessageString();
+            return;
         }
+
+        // Set the current variable
+        currentVariable = root;
+
+        // Extract all types recursively
+        List<ExpressionData> allTypes = new ArrayList<>();
+        // Add the root first
+        allTypes.add(root);
+        // Then collect all its dependencies
+        collectTypesRecursively(currentVariable, allTypes);
+        // Update the widget display
+        super.updateValue(allTypes);
     }
 
     /**
@@ -130,7 +126,8 @@ public class TreeTypeWidget extends NormalTypeWidget {
         buildTypeTreeNode(rootNode, currentVariable);
 
         // Create the tree
-        JTree tree = new JTree(new DefaultTreeModel(rootNode));
+        DefaultTreeModel treeModel = new DefaultTreeModel(rootNode);
+        JTree tree = new JTree(treeModel);
 
         // Customize tree appearance
         DefaultTreeCellRenderer renderer = new DefaultTreeCellRenderer();
@@ -139,23 +136,55 @@ public class TreeTypeWidget extends NormalTypeWidget {
         renderer.setClosedIcon(AllIcons.Nodes.Variable);
         tree.setCellRenderer(renderer);
 
+        // Make row selection visible and enable single selection
+        tree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
+        tree.setRootVisible(true);
+        tree.setShowsRootHandles(true);
+
+        // Enable row selection instead of just node selection
+        tree.setRowHeight(22); // Make rows a bit taller for easier clicking
+
+        // Add mouse listener to handle clicks on entire row
+        tree.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                // Get row at mouse position
+                int row = tree.getRowForLocation(e.getX(), e.getY());
+
+                if (row != -1) {
+                    // Set selection to the row
+                    tree.setSelectionRow(row);
+
+                    // Get the selected node
+                    DefaultMutableTreeNode node = (DefaultMutableTreeNode)
+                            tree.getLastSelectedPathComponent();
+
+                    // Handle selection for highlighting
+                    if (node != null) {
+                        Object userObject = node.getUserObject();
+                        if (userObject instanceof String selectedType) {
+                            removeAllHighlights();
+                            highlightLine(getLineNumber(selectedType)-1);
+                        }
+                    }
+
+                    // Handle expand/collapse on double-click
+                    if (e.getClickCount() == 2) {
+                        TreePath path = tree.getPathForRow(row);
+                        if (tree.isExpanded(path)) {
+                            tree.collapsePath(path);
+                        } else {
+                            tree.expandPath(path);
+                        }
+                    }
+                }
+            }
+        });
+
         // Expand all nodes
         for (int i = 0; i < tree.getRowCount(); i++) {
             tree.expandRow(i);
         }
-
-        // Add selection listener to highlight references
-        tree.addTreeSelectionListener(e -> {
-            DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
-            if (selectedNode != null) {
-                String selectedType;
-                Object userObject = selectedNode.getUserObject();
-                if (userObject instanceof String) {
-                    selectedType = (String) userObject;
-                    highlightAllAssignments(selectedType);
-                }
-            }
-        });
 
         return tree;
     }
@@ -174,30 +203,20 @@ public class TreeTypeWidget extends NormalTypeWidget {
         // Get dependencies
         List<ExpressionData> dependencies = currentTypeMap.get(variable);
         if (dependencies != null) {
-            // Group dependencies by their type
-            Map<String, List<ExpressionData>> groupedDeps = dependencies.stream()
-                    .collect(Collectors.groupingBy(dep -> dep.type));
+            // Add each dependency as a separate node (no grouping)
+            for (ExpressionData dep : dependencies) {
+                // Add line number information to the node label
+                String nodeLabel = dep.type;
 
-            // Add child nodes for each type
-            for (Map.Entry<String, List<ExpressionData>> entry : groupedDeps.entrySet()) {
-                String typeName = entry.getKey();
-                int count = entry.getValue().size();
-
-                // Create node with type name and count
-                String nodeLabel = typeName;
-                if (count > 1) {
-                    nodeLabel += " (" + count + " occurrences)";
-                }
+                int lineNum = dep.lineNumber+1;
+                nodeLabel += " (line " + lineNum + ")";
 
                 DefaultMutableTreeNode typeNode = new DefaultMutableTreeNode(nodeLabel);
                 parentNode.add(typeNode);
 
-                // Get a representative ExpressionData for this type
-                ExpressionData representative = entry.getValue().get(0);
-
                 // Continue building tree recursively if this is a variable with dependencies
-                if (currentTypeMap.containsKey(representative)) {
-                    buildTypeTreeNode(typeNode, representative);
+                if (currentTypeMap.containsKey(dep)) {
+                    buildTypeTreeNode(typeNode, dep);
                 }
             }
         }
@@ -238,7 +257,7 @@ public class TreeTypeWidget extends NormalTypeWidget {
             }
             totalTypes = uniqueTypes.size();
         }
-
+        if(currentVariable == null) return;
         // Build status message
         if (directTypes > 0) {
             message = currentVariable.type + ": " + directTypes + " direct / " + totalTypes + " total types";
@@ -251,6 +270,26 @@ public class TreeTypeWidget extends NormalTypeWidget {
             getStatusBar().updateWidget(ID());
         }
     }
+
+    private int getLineNumber(String type) {
+        String target = "line ";
+        int index = type.indexOf(target); // Find "line " in the string
+
+        if (index != -1) {
+            // Extract everything after "line "
+            String numberPart = type.substring(index + target.length()).replace(")", "").trim();
+            try {
+                return Integer.parseInt(numberPart);
+            } catch (NumberFormatException e) {
+                return -1;
+            }
+        } else {
+            return -1;
+        }
+
+    }
+
+
 
     @Override
     public void dispose() {
